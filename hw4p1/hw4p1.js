@@ -357,16 +357,12 @@ const server = http.createServer(
         }
 
 
-
-
-
         //7.  post /deposit/player/:pid
         else if (req.method=='POST' && /^\/deposit\/player/.test(pathname) ){
-            
+
+            // check amount valid 
             if ( "amount_usd" in query ){
                 var blc = query['amount_usd'];
-                
-                
                 if (/^[0-9]+\.[0-9][0-9]$/.test(blc)
                 
                 || /^[0-9]+$/.test(blc)
@@ -374,14 +370,12 @@ const server = http.createServer(
                 || /^[0-9]+\.$/.test(blc)
 
                 || /^[0-9]+\.[0-9]$/.test(blc)
-                
                 ){
-                    
+                    //valid query amount 
                 }else{
                     res.writeHead(400);
                     res.end()
                 }
-
 
             }else{
                 // invalid amount
@@ -389,46 +383,65 @@ const server = http.createServer(
                 res.end()
             }
             
+            print(query)
             
-            const pid = pathname.split('/').slice(-1);
-            const old_blc = psj.getBalance(pid);
-            if (old_blc){
-                var a = number(old_blc)
-                var b = number(query.amount_usd)
-                var sum = string(a + b)
-                if (!/^[0-9]+\.[0-9][0-9]$/.test(sum)){
-                    var d = sum.split('.')
-                    if (d.length == 1){
-                        sum = d+'.00'
-                    }else if (d.length == 2){
-                        if (d[1].length > 2){
-                            sum = d[0] + '.' + d[1].slice(0,2)
-                        }
-                        else if (d[1].length == 1){
-                            sum = d[0] + '.' + d[1] + '0';
-                        }
-                    }
+            const pid = pathname.split('/').slice(-1)[0];
+            var ido = new ObjectId(pid);
 
+            print(pid)
+
+            MongoClient.connect(mongo_url, function (err, db) {
+                if (err) {
+                    process.exit(5);
                 }
-                res_json = {
-                    old_balance_usd:old_blc,
-                    new_balance_usd:sum,
-                }
-                query.balance_usd = sum;
-                // update
-                psj.updatePlayer(pid, query);
-                // success
-                res.writeHead(200);
-                res.write(JSON.stringify(res_json));
-                res.end();
+                
+                var dbo = db.db(config_json.db);
+                
+                dbo.collection(config_json.collection).findOneAndUpdate(
+                    { _id: ido }, 
+                    {$inc: {balance_usd:sum}}, 
+                    function (err, result) {
+                        print("fucking:result")
+                        print(result)
+
+                        var org_blc = result.balance_usd;
 
 
+                        var sum = string(number(org_blc) + number(query.amount_usd))
+                        if (!/^[0-9]+\.[0-9][0-9]$/.test(sum)){
+                            var d = sum.split('.')
+                            if (d.length == 1){
+                                sum = d+'.00'
+                            }else if (d.length == 2){
+                                if (d[1].length > 2){
+                                    sum = d[0] + '.' + d[1].slice(0,2)
+                                }
+                                else if (d[1].length == 1){
+                                    sum = d[0] + '.' + d[1] + '0';
+                                }
+                            }
+            
+                        }
+            
+                        var res_json = {
+                            old_balance_usd:org_blc,
+                            new_balance_usd:sum,
+                        }
+                        if (result && result.matchedCount == 1){
+                            // balance updated succeed
+                            res.writeHead(200);
+                            res.end();
+                        }else{
+                            // player not found 
+                            res.writeHead(404);
+                            res.end();
+                        }
+                        db.close()
+                });
+                
+                
+            });
 
-            }else{
-                // player not exist
-                res.writeHead(404);
-                res.end()
-            }
         }
 
 
