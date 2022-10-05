@@ -1,0 +1,298 @@
+const fs = require('fs');
+const http = require('http');
+const { ObjectId } = require('mongodb');
+const url = require('url');
+
+
+
+let default_json = {
+    host: "localhost",
+    port: "27017",
+    db: "ee547_hw",
+    opts: {
+        useUnifiedTopology: true
+    }
+}
+
+
+let config_file_path = './config/mongo.json';
+let config_json = default_json;
+
+if (!fs.existsSync(config_file_path)) {
+    // config file not exist
+    config_json = default_json
+}
+else {
+
+    let rawdata = fs.readFileSync(config_file_path);
+
+    // invalid json
+    try {
+        config_json = JSON.parse(rawdata);
+    }
+    catch (e) {
+        process.exit(2);
+        // return 2;
+    }
+
+    // check empty fields -> use default values
+    for (var key of Object.keys(config_json)) {
+        if (config_json[key].length == 0) {
+            config_json = default_json;
+            break;
+        }
+    }
+}
+
+if (!("collection" in config_json)) {
+    config_json['collection'] = 'player';
+}
+
+
+const mongo_url = 'mongodb://' + config_json.host + ':' + config_json.port;
+var MongoClient = require('mongodb').MongoClient;
+
+
+var handed_query_to_db = {
+    left: "L",
+    right: "R",
+    ambi: "A",
+}
+
+var handed_db_to_json = {
+    L: 'left',
+    R: "right",
+    A: "ambi",
+}
+
+// function check_valid_query(query){
+//     let invalids = []
+//     if ('fname' in query){
+//         if(!/^[a-zA-Z()]+$/.test(query['fname'])){
+//             invalids.push('fname')
+//         }
+//     }else{query['fname'] = '';}
+//     if ('lname' in query){
+//         if(!/^[a-zA-Z()]+$/.test(query['lname'])){
+//             invalids.push('lname')
+//         }
+//     }else{query['lname'] = '';}
+
+//     if ('handed' in query){
+//         var lhand = query['handed'].toLowerCase();
+//         if (!(lhand in {'left':'', 'right':'', 'ambi':''})){
+//             invalids.push('handed');
+//         }
+//     }else{query['handed'] = '';}
+
+//     if 
+
+
+
+//     return true
+// }
+function convert_db_to_json_player(result) {
+    var name = result.fname;
+    if (result.lname) {
+        name = name + ' ' + result.lname;
+    }
+    var json = {
+        pid: result._id,
+        "name": name,
+        handed: handed_db_to_json[result.handed],
+        balance_usd: result.balance_usd,
+        is_active: true,
+    }
+    return json;
+}
+
+
+const server = http.createServer(
+
+    function (req, res) {
+
+
+        const parsed_obj = url.parse(req.url, true);
+        const pathname = parsed_obj.pathname;
+        const query = parsed_obj.query;
+
+
+        //1.  get /ping 
+        if (req.method == 'GET' && req.url == '/ping') {
+            res.writeHead(204);
+            res.end();
+        }
+
+
+        // 2.  get /player 
+        // sort by player name, filter active users
+        // return 200 
+        else if (req.method == 'GET' && req.url == '/player') {
+            MongoClient.connect(mongo_url, function (err, db) {
+                if (err) process.exit(5);
+
+                var dbo = db.db(config_json.db);
+                dbo.collection(config_json.collection).find({}).toArray(function (err, result) {
+                    var data = [];
+                    for (var obj of result) {
+                        data.push(convert_db_to_json_player(obj));
+                    }
+                    // sorting the data
+                    data.sort(function (p1, p2) {
+                        if (p1.name < p2.name) return -1;
+                        if (p1.name > p2.name) return 1;
+                    })
+                    res.writeHead(200);
+                    res.write(JSON.stringify(data));
+                    res.end();
+                    db.close();
+                })
+            })
+        }
+
+
+        //3.  get /player/:pid
+        //return 200 if exist, 404 if not exist
+        else if (req.method == 'GET' && /\/player\/\d/.test(pathname)) {
+            const pid = pathname.split('/').slice(-1)[0];
+            // console.log(pid);
+            MongoClient.connect(mongo_url, function (err, db) {
+                if (err) process.exit(5);
+
+                var dbo = db.db(config_json.db);
+                var ido = new ObjectId(pid);
+                dbo.collection(config_json.collection).findOne({ '_id': ido }, function (err, result) {
+                    // console.log(result);
+                    if (result) {
+                        res.writeHead(200);
+                        res.write(JSON.stringify(convert_db_to_json_player(result)));
+                    } else {
+                        res.writeHead(404);
+                    }
+                    res.end();
+                })
+            })
+        }
+
+        //4.  delete /player/:pid  
+        // succeed -> redirect 303
+        // fail -> 404
+        else if (req.method == 'DELETE' && /\/player\/\d/.test(pathname)) {
+
+            const pid = pathname.split('/').slice(-1)[0];
+            MongoClient.connect(mongo_url, function (err, db) {
+                var dbo = db.db(config_json.db);
+                var ido = new ObjectId(pid);
+                var coll = config_json.collection;
+            
+                dbo.collection(coll).deleteOne({ _id: ido }, function (err, result) {
+                    console.log(result);
+                    if (result.deletedCount == 1){
+                        res.writeHead(303, {'Location':'/player'});
+                    }else{
+                        res.writeHead(404);
+                    }
+
+                    res.end();
+                })
+            })
+
+        }
+
+
+
+        //5.  post /player
+        // success -> 303 redict to get /player/:pid
+        // fail -> 422 must tell all the invalid fields
+        else if (req.method == 'POST' && pathname == '/player') {
+            // check query:
+            let invalids = [];
+            if ('fname' in query){
+                if(!/^[a-zA-Z()]+$/.test(query['fname'])){
+                    invalids.push('fname')
+                }
+            }else{query['fname'] = '';}
+            if ('lname' in query){
+                if(!/^[a-zA-Z()]+$/.test(query['lname'])){
+                    invalids.push('lname')
+                }
+            }else{query['lname'] = '';}
+
+            if ('handed' in query){
+                var lhand = query['handed'].toLowerCase();
+                if (!(lhand in {'left':'', 'right':'', 'ambi':''})){
+                    invalids.push('handed');
+                }
+            }else{query['handed'] = '';}
+            if ('initial_balance_usd' in query){
+                var blc = query['initial_balance_usd'];
+
+                var digits = blc.split('.')
+                
+                if (digits.length > 2 || (digits.length == 2 && digits[1].length > 2)){
+                    invalids.push('initial_balance_usd');
+                }
+
+            }else{query['initial_balance_usd'] = '';}
+
+
+            if (invalids.length > 0){
+                res.writeHead(422);
+                res.write('invalid fields: ' + invalids.join())
+            }else{
+                var new_id = '';
+
+                // valid query  
+                var document = {
+                    fname: query.fname,
+                    lname: query.lname,
+                    handed: handed_query_to_db[query.handed],
+                    is_active: true,
+                    balance_usd: query.initial_balance_usd,
+                }
+
+                MongoClient.connect(mongo_url, function (err, db) {
+                    if (err) {
+                        process.exit(5);
+                    }
+
+                    var dbo = db.db(config_json.db);
+                    dbo.collection('site').insertOne(document, function (err, result) {
+                        
+                        console.log(result);
+                        
+
+    
+                        db.close();
+    
+                    });
+                });
+                // res.writeHead(303, {'Location':'/player/'+new_id.toString()});
+            }
+            res.end();
+
+            
+
+
+        }
+
+        //6.  post /player/:pid
+
+        //7.  post /deposit/player/:pid
+
+
+        // others
+        else {
+            // player not exist
+            res.writeHead(404);
+            res.end()
+
+        }
+
+
+    }
+
+
+)
+
+server.listen(3000);
