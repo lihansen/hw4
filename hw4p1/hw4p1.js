@@ -1,6 +1,10 @@
 const fs = require('fs');
 const http = require('http');
+const { reject } = require('lodash');
+const { number } = require('mathjs');
+// const { reject } = require('lodash');
 const { ObjectId } = require('mongodb');
+const { resolve } = require('path');
 const url = require('url');
 
 
@@ -17,6 +21,8 @@ let default_json = {
 
 let config_file_path = './config/mongo.json';
 let config_json = default_json;
+
+
 
 if (!fs.existsSync(config_file_path)) {
     // config file not exist
@@ -144,12 +150,110 @@ function check_balance(sum) {
 }
 
 
-function print(a){
+function print(a) {
     console.log(a);
 }
 
 
+function p_update(pid, mongo_url, update_query) {
+    return new Promise((resolve, reject) => {
+        MongoClient.connect(mongo_url, function (err, db) {
+            if (err) process.exit(5);
+            var dbo = db.db(config_json.db);
+            var ido = new ObjectId(pid);
+            dbo.collection(config_json.collection).updateOne({ _id: ido },
+                { $set: update_query },
+                function (err, result) {
+                    // console.log(result);
+                    if (result && result.matchedCount == 1) {
+                        resolve(result);
+                    } else {
+                        reject();
+                    }
+                })
 
+        })
+    })
+}
+
+
+function p_find(pid, mongo_url) {
+    return new Promise((resolve, reject) => {
+        MongoClient.connect(mongo_url, function (err, db) {
+            if (err) process.exit(5);
+
+            var dbo = db.db(config_json.db);
+            var ido = new ObjectId(pid);
+            dbo.collection(config_json.collection).findOne({ '_id': ido },
+                function (err, result) {
+                    // console.log(result);
+                    if (result) {
+                        resolve(result);
+
+                    } else {
+                        reject(new Error('rejected'));
+                    }
+                })
+
+        })
+    })
+
+}
+
+function check_valid_amount_in_query(query) {
+    
+    if ("amount_usd" in query) {
+        var blc = query['amount_usd'];
+        if (/^[0-9]+\.[0-9][0-9]$/.test(blc)
+
+            || /^[0-9]+$/.test(blc)
+
+            || /^[0-9]+\.$/.test(blc)
+
+            || /^[0-9]+\.[0-9]$/.test(blc)
+        ) {
+            //valid query amount 
+            return true;
+        } else {
+            return false
+        }
+
+    } else {
+        return false;
+    }
+}
+
+
+function format_balance(blc_org, blc_new) {
+    // print('blc_new:' + blc_new);
+    var sum = number(blc_org) + number(blc_new);
+    sum = sum.toString();
+    if (!/^[0-9]+\.[0-9][0-9]$/.test(sum)) {
+        var d = sum.split('.')
+        if (d.length == 1) {
+            sum = d + '.00'
+        } else if (d.length == 2) {
+            if (d[1].length > 2) {
+                sum = d[0] + '.' + d[1].slice(0, 2)
+            }
+            else if (d[1].length == 1) {
+                sum = d[0] + '.' + d[1] + '0';
+            }
+        }
+    }
+    // print('return_sum: ' + sum);
+    return sum
+}
+///////////////////////////////////////////////////////////////////////////////////////
+
+
+
+
+
+
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////
 const server = http.createServer(
 
     function (req, res) {
@@ -228,7 +332,7 @@ const server = http.createServer(
                 var coll = config_json.collection;
 
                 dbo.collection(coll).deleteOne({ _id: ido }, function (err, result) {
-                    console.log(result);
+                    // console.log(result);
                     if (result.deletedCount == 1) {
                         res.writeHead(303, { 'Location': '/player' });
                     } else {
@@ -275,7 +379,7 @@ const server = http.createServer(
                     var dbo = db.db(config_json.db);
                     dbo.collection(config_json.collection).insertOne(document, function (err, result) {
 
-                        console.log(result);
+                        // console.log(result);
                         new_id = result.insertedId;
                         // res.writeHead(408);
                         res.writeHead(303, { 'Location': '/player/' + new_id.toString() });
@@ -295,13 +399,11 @@ const server = http.createServer(
         else if (req.method == 'POST' && /^\/player\/\d/.test(pathname)) {
 
             const pid = pathname.split('/').slice(-1)[0];
-            // check pid
 
-
+            // check pid 
             var invalids = check_invalid_query(query);
-            // console.log(invalids);
-            // console.log(query);
-            if (invalids.length==0 && query) {
+            
+            if (invalids.length == 0 && query) {
                 // valid query
                 // print('im in')
 
@@ -319,23 +421,23 @@ const server = http.createServer(
                 if ('active' in query) {
                     update_query['is_active'] = query['active'];
                 }
-                print(update_query);
-                print(query)
+                // print(update_query);
+                // print(query)
                 var ido = new ObjectId(pid);
 
                 MongoClient.connect(mongo_url, function (err, db) {
                     if (err) {
                         process.exit(5);
                     }
-                    
+
                     var dbo = db.db(config_json.db);
                     if (update_query) {
-                        dbo.collection(config_json.collection).updateOne({ _id: ido }, {$set: update_query}, function (err, result) {
-                            console.log(result);
-                            if (result && result.matchedCount == 1){
+                        dbo.collection(config_json.collection).updateOne({ _id: ido }, { $set: update_query }, function (err, result) {
+                            // console.log(result);
+                            if (result && result.matchedCount == 1) {
                                 res.writeHead(303, { 'Location': '/player/' + pid });
                                 res.end();
-                            }else{
+                            } else {
                                 res.writeHead(404);
                                 res.end();
                             }
@@ -343,13 +445,13 @@ const server = http.createServer(
                             db.close()
                         });
                     }
-                    
+
                 });
 
                 // res.writeHead(303, { 'Location': '/player/' + pid });
                 // res.end();
-            } 
-            
+            }
+
             else {
                 res.writeHead(404);
                 res.end();
@@ -358,89 +460,43 @@ const server = http.createServer(
 
 
         //7.  post /deposit/player/:pid
-        else if (req.method=='POST' && /^\/deposit\/player/.test(pathname) ){
-
-            // check amount valid 
-            if ( "amount_usd" in query ){
-                var blc = query['amount_usd'];
-                if (/^[0-9]+\.[0-9][0-9]$/.test(blc)
-                
-                || /^[0-9]+$/.test(blc)
-
-                || /^[0-9]+\.$/.test(blc)
-
-                || /^[0-9]+\.[0-9]$/.test(blc)
-                ){
-                    //valid query amount 
-                }else{
-                    res.writeHead(400);
-                    res.end()
-                }
-
-            }else{
-                // invalid amount
-                res.writeHead(400);
-                res.end()
-            }
-            
-            print(query)
-            
+        else if (req.method == 'POST' && /^\/deposit\/player/.test(pathname)) {
             const pid = pathname.split('/').slice(-1)[0];
-            var ido = new ObjectId(pid);
 
-            print(pid)
+            p_find(pid, mongo_url).then(
+                (data) => { // player found 
+                    var blc = data.balance_usd;
+                    // check balance
 
-            MongoClient.connect(mongo_url, function (err, db) {
-                if (err) {
-                    process.exit(5);
-                }
-                
-                var dbo = db.db(config_json.db);
-                
-                dbo.collection(config_json.collection).findOneAndUpdate(
-                    { _id: ido }, 
-                    {$inc: {balance_usd:sum}}, 
-                    function (err, result) {
-                        print("fucking:result")
-                        print(result)
+                    // check amount valid 
+                    if (!check_valid_amount_in_query(query)) {
+                        res.writeHead(400);
+                        res.end();
+                    }else{
+                        // format the new balance to string 
+                        var new_blc = format_balance(blc, query.amount_usd);
 
-                        var org_blc = result.balance_usd;
+                        // update the blc 
+                        p_update(pid, mongo_url, { balance_usd: new_blc }).then(
+                            (data) => {
+                                res.writeHead(200);
+                                res.write(JSON.stringify({
+                                    old_balance_usd: blc,
+                                    new_balance_usd: new_blc,
+                                }))
+                                res.end();
+                            }, (err) => {
+                                res.writeHead(888);
+                                res.end();
+                            })
+                    }
 
-
-                        var sum = string(number(org_blc) + number(query.amount_usd))
-                        if (!/^[0-9]+\.[0-9][0-9]$/.test(sum)){
-                            var d = sum.split('.')
-                            if (d.length == 1){
-                                sum = d+'.00'
-                            }else if (d.length == 2){
-                                if (d[1].length > 2){
-                                    sum = d[0] + '.' + d[1].slice(0,2)
-                                }
-                                else if (d[1].length == 1){
-                                    sum = d[0] + '.' + d[1] + '0';
-                                }
-                            }
-            
-                        }
-            
-                        var res_json = {
-                            old_balance_usd:org_blc,
-                            new_balance_usd:sum,
-                        }
-                        if (result && result.matchedCount == 1){
-                            // balance updated succeed
-                            res.writeHead(200);
-                            res.end();
-                        }else{
-                            // player not found 
-                            res.writeHead(404);
-                            res.end();
-                        }
-                        db.close()
-                });
-                
-                
-            });
+                    
+                }, (err) => {
+                    // player not found 
+                    res.writeHead(404);
+                    res.end();
+                })
 
         }
 
@@ -460,3 +516,5 @@ const server = http.createServer(
 )
 
 server.listen(3000);
+
+exports.f = check_valid_amount_in_query
