@@ -263,7 +263,7 @@ const server = http.createServer(
                     fname: query.fname,
                     lname: query.lname,
                     handed: handed_query_to_db[query.handed],
-                    is_active: true,
+                    is_active: query.active,
                     balance_usd: check_balance(query.initial_balance_usd),
                 }
 
