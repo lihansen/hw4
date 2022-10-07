@@ -32,7 +32,7 @@ const DEFAULT_WWW = {
 // printOnClose, if true print STDOUT/STDERR from tested process upon exit
 //               else hidden
 const EXTRA_PROCESS_OPTS = {
-  printOnClose: false
+  printOnClose: true
 };
 
 /**************************************/
@@ -210,7 +210,9 @@ class Fixture {
     if (_.isPlainObject(exp_partial)) {
       for (const exp_key in exp_partial) {
         expect(d).to.have.property(exp_key);
+        // console.log(d, '->', exp_partial[exp_key]);
         expect(d[exp_key]).to.equal(exp_partial[exp_key]);
+        
       }
     }
 

@@ -171,6 +171,8 @@ describe('POST /player', function() {
       const player = await fix.get_player(pid);
 
       expect(player).to.have.property('created_at');
+
+      // console.log('fuck:', player)
       expect(player.created_at).to.be.instanceof(Date);
     });
   });

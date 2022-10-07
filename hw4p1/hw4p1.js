@@ -79,14 +79,17 @@ function convert_db_to_json_player(result) {
     if (result.lname) {
         name = name + ' ' + result.lname;
     }
-    var json = {
-        pid: result._id,
-        "name": name,
-        handed: handed_db_to_json[result.handed],
-        balance_usd: result.balance_usd,
-        is_active: true,
+
+    if (result.is_active == 'f') {
+        result['is_active'] = false
     }
-    return json;
+    return {
+        pid: result._id,
+        name: name,
+        handed: handed_db_to_json[result.handed],
+        balance_usd: format_balance(result.balance_usd, '0'),
+        is_active: result.is_active,
+    }
 }
 
 function check_invalid_query(query) {
@@ -95,15 +98,15 @@ function check_invalid_query(query) {
         if (!/^[a-zA-Z()]+$/.test(query['fname'])) {
             invalids.push('fname')
         }
-    }
+    } else { invalids.push('fname') }
     if ('lname' in query) {
         if (!/^[a-zA-Z()]+$/.test(query['lname'])) {
             invalids.push('lname')
         }
-    }
+    } else { invalids.push('lname') }
 
     if ('handed' in query) {
-        var lhand = query['handed'].toLowerCase();
+        var lhand = query['handed']//.toLowerCase();
         if (!(lhand in { 'left': '', 'right': '', 'ambi': '' })) {
             invalids.push('handed');
         }
@@ -117,16 +120,40 @@ function check_invalid_query(query) {
             invalids.push('initial_balance_usd');
         }
     }
-    // if ('active')
+    if ('balance_usd' in query) {
+        var blc = query['balance_usd'];
+
+        var digits = blc.split('.')
+
+        if (digits.length > 2 || (digits.length == 2 && digits[1].length > 2)) {
+            invalids.push('initial_balance_usd');
+        }
+    }
+    if ('active' in query) {
+        if (query['active'] == true || query['active'] == false) {
+
+        } else {
+            invalids.push('active');
+        }
+    } else { query['active'] = true; }
     return invalids
 }
-
+exports.x = check_invalid_query
 function fill_empty_fields(query) {
+    // var new_query = {}
+    // if (!'fname' in query){
+    //     new_query['fname'] = ''
+    // }
+    // if (!'lname' in query){
+    //     new_query['lname'] = ''
+    // }
+    // if (!)
     for (var field of query_fields) {
         if (!field in query) {
             query[field] = '';
         }
     }
+    // return new_query
 }
 
 function check_balance(sum) {
@@ -164,7 +191,7 @@ function p_update(pid, mongo_url, update_query) {
             dbo.collection(config_json.collection).updateOne({ _id: ido },
                 { $set: update_query },
                 function (err, result) {
-                    // console.log(result);
+
                     if (result && result.matchedCount == 1) {
                         resolve(result);
                     } else {
@@ -186,12 +213,14 @@ function p_find(pid, mongo_url) {
             var ido = new ObjectId(pid);
             dbo.collection(config_json.collection).findOne({ '_id': ido },
                 function (err, result) {
-                    // console.log(result);
                     if (result) {
+                        // print("not rej:")
+                        // print(result)
                         resolve(result);
-
                     } else {
-                        reject(new Error('rejected'));
+                        // print("fuckrej:")
+                        // print(pid)
+                        reject(result);
                     }
                 })
 
@@ -201,7 +230,7 @@ function p_find(pid, mongo_url) {
 }
 
 function check_valid_amount_in_query(query) {
-    
+
     if ("amount_usd" in query) {
         var blc = query['amount_usd'];
         if (/^[0-9]+\.[0-9][0-9]$/.test(blc)
@@ -225,7 +254,6 @@ function check_valid_amount_in_query(query) {
 
 
 function format_balance(blc_org, blc_new) {
-    // print('blc_new:' + blc_new);
     var sum = number(blc_org) + number(blc_new);
     sum = sum.toString();
     if (!/^[0-9]+\.[0-9][0-9]$/.test(sum)) {
@@ -241,9 +269,29 @@ function format_balance(blc_org, blc_new) {
             }
         }
     }
-    // print('return_sum: ' + sum);
     return sum
 }
+
+function p_insert(insert_query, mongo_url) {
+    return new Promise((resolve, reject) => {
+        MongoClient.connect(mongo_url, function (err, db) {
+            if (err) {
+                process.exit(5);
+            }
+            var dbo = db.db(config_json.db);
+            dbo.collection(config_json.collection).insertOne(insert_query, function (err, result) {
+                if (result) {
+                    resolve(result);
+                } else {
+                    reject(new Error('fuck'));
+                }
+                db.close()
+            });
+        });
+    })
+}
+
+
 ///////////////////////////////////////////////////////////////////////////////////////
 
 
@@ -301,23 +349,19 @@ const server = http.createServer(
         //return 200 if exist, 404 if not exist
         else if (req.method == 'GET' && /\/player\/\d/.test(pathname)) {
             const pid = pathname.split('/').slice(-1)[0];
-            // console.log(pid);
-            MongoClient.connect(mongo_url, function (err, db) {
-                if (err) process.exit(5);
 
-                var dbo = db.db(config_json.db);
-                var ido = new ObjectId(pid);
-                dbo.collection(config_json.collection).findOne({ '_id': ido }, function (err, result) {
-                    // console.log(result);
-                    if (result) {
-                        res.writeHead(200);
-                        res.write(JSON.stringify(convert_db_to_json_player(result)));
-                    } else {
-                        res.writeHead(404);
-                    }
+            p_find(pid, mongo_url).then(
+                (data) => {
+                    var rdata = convert_db_to_json_player(data)
+                    res.writeHead(200);
+                    res.write(JSON.stringify(rdata));
                     res.end();
-                })
-            })
+                },
+                (err) => {
+                    res.writeHead(863);
+                    res.end();
+                });
+
         }
 
         //4.  delete /player/:pid  
@@ -332,13 +376,11 @@ const server = http.createServer(
                 var coll = config_json.collection;
 
                 dbo.collection(coll).deleteOne({ _id: ido }, function (err, result) {
-                    // console.log(result);
                     if (result.deletedCount == 1) {
                         res.writeHead(303, { 'Location': '/player' });
                     } else {
                         res.writeHead(404);
                     }
-
                     res.end();
                 })
             })
@@ -349,64 +391,61 @@ const server = http.createServer(
         // success -> 303 redict to get /player/:pid
         // fail -> 422 must tell all the invalid fields
         else if (req.method == 'POST' && pathname == '/player') {
-            // console.log('fucking', pathname)
-            // check query:
+            // print(query)
             var checked = check_invalid_query(query);
+
             var invalids = checked;
             fill_empty_fields(query);
 
-            if (invalids.length > 0) {
-                res.writeHead(422);
-                res.write('invalid fields: ' + invalids.join())
-                res.end();
-            } else {
-                var new_id = '';
-
+            if (invalids.length == 0) {
                 // valid query  
+                var date = new Date();
                 var document = {
                     fname: query.fname,
                     lname: query.lname,
                     handed: handed_query_to_db[query.handed],
                     is_active: query.active,
                     balance_usd: check_balance(query.initial_balance_usd),
+                    created_at: date,
                 }
 
-                MongoClient.connect(mongo_url, function (err, db) {
-                    if (err) {
-                        process.exit(5);
-                    }
-
-                    var dbo = db.db(config_json.db);
-                    dbo.collection(config_json.collection).insertOne(document, function (err, result) {
-
-                        // console.log(result);
-                        new_id = result.insertedId;
-                        // res.writeHead(408);
+                p_insert(document, mongo_url).then(
+                    (data) => {
+                        var new_id = data.insertedId.toString();
                         res.writeHead(303, { 'Location': '/player/' + new_id.toString() });
                         res.end();
-
-                    });
-                });
+                    },
+                    (err) => {
+                        print('fucking err:')
+                        print(err)
+                    }
+                )
+            } else {
+                res.writeHead(422);
+                res.write('invalid fields: ' + invalids.join())
+                res.end();
 
             }
+            // res.writeHead(888);
+            // res.end();
 
         }
 
         // 6.  post /player/:pid
+        // update player 
         // alter succeed -> 303  to 
         // fail -> 404 
 
         else if (req.method == 'POST' && /^\/player\/\d/.test(pathname)) {
-
             const pid = pathname.split('/').slice(-1)[0];
-
-            // check pid 
-            var invalids = check_invalid_query(query);
-            
-            if (invalids.length == 0 && query) {
-                // valid query
-                // print('im in')
-
+            // check pid check_query_for_update(query)
+            if (query) {
+                if (query['active'] == 'f') {
+                    query['active'] = false
+                }
+                if (query['active'] in { 't': 1, '1': 1, 'true': 1, 'T': 1, 'TRUE': 1 }) {
+                    query['active'] = true
+                }
                 var update_query = {};
 
                 if ('fname' in query) {
@@ -421,39 +460,40 @@ const server = http.createServer(
                 if ('active' in query) {
                     update_query['is_active'] = query['active'];
                 }
-                // print(update_query);
-                // print(query)
+
                 var ido = new ObjectId(pid);
 
                 MongoClient.connect(mongo_url, function (err, db) {
                     if (err) {
                         process.exit(5);
                     }
-
                     var dbo = db.db(config_json.db);
+                    // throw new Error('fuck');
                     if (update_query) {
                         dbo.collection(config_json.collection).updateOne({ _id: ido }, { $set: update_query }, function (err, result) {
-                            // console.log(result);
-                            if (result && result.matchedCount == 1) {
+
+                            if (result && result.matchedCount ==1) {
                                 res.writeHead(303, { 'Location': '/player/' + pid });
                                 res.end();
+                                // print("fuckfound")
+                                // print(result)
                             } else {
-                                res.writeHead(404);
+                                // print('fucknotfound:')
+                                // print(result)
+                                res.writeHead(571);
                                 res.end();
                             }
                             // new_id = result.insertedId;
                             db.close()
                         });
                     }
-
                 });
 
                 // res.writeHead(303, { 'Location': '/player/' + pid });
                 // res.end();
             }
-
             else {
-                res.writeHead(404);
+                res.writeHead(567);
                 res.end();
             }
         }
@@ -472,7 +512,8 @@ const server = http.createServer(
                     if (!check_valid_amount_in_query(query)) {
                         res.writeHead(400);
                         res.end();
-                    }else{
+                    } else {
+
                         // format the new balance to string 
                         var new_blc = format_balance(blc, query.amount_usd);
 
@@ -491,7 +532,7 @@ const server = http.createServer(
                             })
                     }
 
-                    
+
                 }, (err) => {
                     // player not found 
                     res.writeHead(404);

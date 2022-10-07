@@ -21,5 +21,6 @@
 
 const check = require('./hw4p1')
 
-var c = check.f({amount_usd:'0.0'})
-console.log(c)
+// var c = check.f({amount_usd:'0.0'})
+var x = check.x({handed:'l'})
+console.log(x)
