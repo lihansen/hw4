@@ -139,21 +139,14 @@ function check_invalid_query(query) {
     return invalids
 }
 exports.x = check_invalid_query
+
 function fill_empty_fields(query) {
-    // var new_query = {}
-    // if (!'fname' in query){
-    //     new_query['fname'] = ''
-    // }
-    // if (!'lname' in query){
-    //     new_query['lname'] = ''
-    // }
-    // if (!)
+
     for (var field of query_fields) {
         if (!field in query) {
             query[field] = '';
         }
     }
-    // return new_query
 }
 
 function check_balance(sum) {
@@ -352,13 +345,13 @@ const server = http.createServer(
 
             p_find(pid, mongo_url).then(
                 (data) => {
-                    var rdata = convert_db_to_json_player(data)
+                    var rdata = convert_db_to_json_player(data);
                     res.writeHead(200);
                     res.write(JSON.stringify(rdata));
                     res.end();
                 },
                 (err) => {
-                    res.writeHead(863);
+                    res.writeHead(404);
                     res.end();
                 });
 
@@ -438,64 +431,48 @@ const server = http.createServer(
 
         else if (req.method == 'POST' && /^\/player\/\d/.test(pathname)) {
             const pid = pathname.split('/').slice(-1)[0];
-            // check pid check_query_for_update(query)
-            if (query) {
-                if (query['active'] == 'f') {
-                    query['active'] = false
-                }
-                if (query['active'] in { 't': 1, '1': 1, 'true': 1, 'T': 1, 'TRUE': 1 }) {
-                    query['active'] = true
-                }
-                var update_query = {};
-
-                if ('fname' in query) {
-                    update_query['fname'] = query['fname'];
-                }
-                if ('lname' in query) {
-                    update_query['lname'] = query['lname'];
-                }
-                if ('handed' in query) {
-                    update_query['handed'] = handed_query_to_db[query['handed']];
-                }
-                if ('active' in query) {
-                    update_query['is_active'] = query['active'];
-                }
-
-                var ido = new ObjectId(pid);
-
-                MongoClient.connect(mongo_url, function (err, db) {
-                    if (err) {
-                        process.exit(5);
+            // print(pid)
+            // print(query)
+            p_find(pid, mongo_url).then(
+                (data) => {
+                    var update_query = {};
+                    if (query['active'] == 'f') {
+                        query['active'] = false
                     }
-                    var dbo = db.db(config_json.db);
-                    // throw new Error('fuck');
-                    if (update_query) {
-                        dbo.collection(config_json.collection).updateOne({ _id: ido }, { $set: update_query }, function (err, result) {
-
-                            if (result && result.matchedCount ==1) {
-                                res.writeHead(303, { 'Location': '/player/' + pid });
-                                res.end();
-                                // print("fuckfound")
-                                // print(result)
-                            } else {
-                                // print('fucknotfound:')
-                                // print(result)
-                                res.writeHead(571);
-                                res.end();
-                            }
-                            // new_id = result.insertedId;
-                            db.close()
-                        });
+                    if (query['active'] in { 't': 1, '1': 1, 'true': 1, 'T': 1, 'TRUE': 1 }) {
+                        query['active'] = true
                     }
-                });
+                    if ('fname' in query) {
+                        update_query['fname'] = query['fname'];
+                    }
+                    if ('lname' in query) {
+                        update_query['lname'] = query['lname'];
+                    }
+                    if ('handed' in query) {
+                        update_query['handed'] = handed_query_to_db[query['handed']];
+                    }
+                    if ('active' in query) {
+                        update_query['is_active'] = query['active'];
+                    }
 
-                // res.writeHead(303, { 'Location': '/player/' + pid });
-                // res.end();
-            }
-            else {
-                res.writeHead(567);
-                res.end();
-            }
+                    p_update(pid, mongo_url, update_query).then((data) => {
+                        // res.writeHead(303, { 'Location': '/player/' + pid });
+                        // res.end();
+                        res.writeHead(303, { 'Location': '/player/' + pid });
+                        res.end();
+                    }, (err) => {
+                        // res.writeHead(404);
+                        // res.end();
+                        res.writeHead(303, { 'Location': '/player/' + pid });
+                        res.end();
+                    });
+                    
+                },
+                (err) => {
+                    res.writeHead(404);
+                    res.end();
+                }
+            )
         }
 
 
