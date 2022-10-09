@@ -6,7 +6,230 @@ const { number } = require('mathjs');
 const { ObjectId } = require('mongodb');
 const { resolve } = require('path');
 const url = require('url');
+const express = require('express')
+const app = express()
+const port = 3000
 
+
+// 1
+app.get('/ping', (req, res) => {
+    res.writeHead(204);
+    res.end();
+})
+
+// 2
+app.get('/player', (req, res) => {
+    MongoClient.connect(mongo_url, function (err, db) {
+        if (err) process.exit(5);
+
+        var dbo = db.db(config_json.db);
+        dbo.collection(config_json.collection).find({}).toArray(function (err, result) {
+            var data = [];
+            for (var obj of result) {
+                data.push(convert_db_to_json_player(obj));
+            }
+            // sorting the data
+            data.sort(function (p1, p2) {
+                if (p1.name < p2.name) return -1;
+                if (p1.name > p2.name) return 1;
+            })
+            res.writeHead(200);
+            res.write(JSON.stringify(data));
+            res.end();
+            db.close();
+        })
+    })
+})
+
+
+// 3
+app.get('/player/:pid', (req, res) => {
+    var pid = req.params.pid;
+    p_find(pid, mongo_url).then(
+        (data) => {
+            var rdata = convert_db_to_json_player(data);
+            res.writeHead(200);
+            res.write(JSON.stringify(rdata));
+            res.end();
+        },
+        (err) => {
+            res.writeHead(404);
+            res.end();
+        });
+})
+
+// 4
+app.delete('/player/:pid', (req, res) => {
+    var pid = req.params.pid;
+    MongoClient.connect(mongo_url, function (err, db) {
+        var dbo = db.db(config_json.db);
+        var ido = new ObjectId(pid);
+        var coll = config_json.collection;
+
+        dbo.collection(coll).deleteOne({ _id: ido }, function (err, result) {
+            if (result.deletedCount == 1) {
+                res.writeHead(303, { 'Location': '/player' });
+                res.end();
+            } else {
+                res.writeHead(404);
+                res.end()
+            }
+        })
+    })
+})
+
+// 5
+app.post('/player', (req, res) => {
+    var query = req.query;
+
+    // print(query)
+    var checked = check_invalid_query(query);
+
+    var invalids = checked;
+    fill_empty_fields(query);
+
+    if (invalids.length == 0) {
+        // valid query  
+        var date = new Date();
+        var document = {
+            fname: query.fname,
+            lname: query.lname,
+            handed: handed_query_to_db[query.handed],
+            is_active: query.active,
+            balance_usd: check_balance(query.initial_balance_usd),
+            created_at: date,
+        }
+
+        p_insert(document, mongo_url).then(
+            (data) => {
+                var new_id = data.insertedId.toString();
+                res.writeHead(303, { 'Location': '/player/' + new_id.toString() });
+                res.end();
+            },
+            (err) => {
+                print('fucking err:')
+                print(err)
+            }
+        )
+    } else {
+        res.writeHead(422);
+        res.write('invalid fields: ' + invalids.join())
+        res.end();
+
+    }
+    // res.writeHead(888);
+    // res.end();
+})
+
+
+// 6
+app.post('/player/:pid', (req, res) => {
+    var pid = req.params.pid;
+    var query = req.query;
+    // print(query)
+    if (!query) {
+        res.writeHead(303, { 'Location': '/player/' + pid });
+        res.end();
+    } else {
+
+        p_find(pid, mongo_url).then(
+            (data) => {
+                // var oid = new ObjectId(pid);
+                // throw new Error(oid.toString() + "->" + pid);
+                var update_query = {};
+
+                if ('fname' in query) {
+                    update_query['fname'] = query['fname'];
+                }
+                if ('lname' in query) {
+                    update_query['lname'] = query['lname'];
+                }
+                if ('handed' in query) {
+                    update_query['handed'] = handed_query_to_db[query['handed']];
+                }
+                if ('active' in query) {
+                    if (query['active'] == 'f' || query['isactive'] == false) {
+                        update_query['is_active'] = false
+                    }
+                    if (query['active'] in { 't': 1, '1': 1, 'true': 1, 'T': 1, 'TRUE': 1 }
+                        || query['active'] == true) {
+                        update_query['is_active'] = true
+                    }
+                }
+
+                p_update(pid, mongo_url, update_query).then((data) => {
+
+                    res.writeHead(303, { 'Location': '/player/' + pid });
+                    res.end();
+                }, (err) => {
+                    // res.writeHead(404);
+                    // res.end();
+                    res.writeHead(303, { 'Location': '/player/' + pid });
+                    res.end();
+                });
+            },
+            (err) => {
+                res.writeHead(404);
+                res.end();
+            }
+        )
+    }
+})
+
+
+// 7
+app.post('/deposit/player/:pid', (req, res) => {
+    var pid = req.params.pid;
+    var query = req.query;
+
+    p_find(pid, mongo_url).then(
+        (data) => { // player found 
+            var blc = data.balance_usd;
+            // check balance
+
+            // check amount valid 
+            if (!check_valid_amount_in_query(query)) {
+                res.writeHead(400);
+                res.end();
+            } else {
+
+                // format the new balance to string 
+                var new_blc = format_balance(blc, query.amount_usd);
+
+                // update the blc 
+                p_update(pid, mongo_url, { balance_usd: new_blc }).then(
+                    (data) => {
+                        res.writeHead(200);
+                        res.write(JSON.stringify({
+                            old_balance_usd: blc,
+                            new_balance_usd: new_blc,
+                        }))
+                        res.end();
+                    }, (err) => {
+                        res.writeHead(888);
+                        res.end();
+                    })
+            }
+
+
+        }, (err) => {
+            // player not found 
+            res.writeHead(404);
+            res.end();
+        })
+
+})
+
+app.listen(port, () => {
+    // console.log(`Example app listening on port ${port}`)
+})
+
+
+
+
+////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////util functions//////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////
 
 
 let default_json = {
@@ -18,10 +241,8 @@ let default_json = {
     }
 }
 
-
 let config_file_path = './config/mongo.json';
 let config_json = default_json;
-
 
 
 if (!fs.existsSync(config_file_path)) {
@@ -57,7 +278,6 @@ if (!("collection" in config_json)) {
 
 const mongo_url = 'mongodb://' + config_json.host + ':' + config_json.port;
 var MongoClient = require('mongodb').MongoClient;
-
 
 var handed_query_to_db = {
     left: "L",
@@ -197,30 +417,58 @@ function p_update(pid, mongo_url, update_query) {
 }
 
 
+// function p_find(pid, mongo_url) {
+//     return new Promise((resolve, reject) => {
+//         MongoClient.connect(mongo_url, function (err, db) {
+//             if (err) process.exit(5);
+
+//             var dbo = db.db(config_json.db);
+//             var ido = new ObjectId(pid);
+//             dbo.collection(config_json.collection).findOne({ _id: ido },
+//                 function (err, result) {
+//                     if (result) {
+//                         resolve(result);
+//                     } else {
+//                         reject(err);
+//                     }
+//                 })
+
+//         })
+//     })
+
+// }
+
+
 function p_find(pid, mongo_url) {
     return new Promise((resolve, reject) => {
         MongoClient.connect(mongo_url, function (err, db) {
-            if (err) process.exit(5);
+            if (!err) {
 
-            var dbo = db.db(config_json.db);
-            var ido = new ObjectId(pid);
-            dbo.collection(config_json.collection).findOne({ '_id': ido },
-                function (err, result) {
-                    if (result) {
-                        // print("not rej:")
-                        // print(result)
-                        resolve(result);
-                    } else {
-                        // print("fuckrej:")
-                        // print(pid)
-                        reject(result);
-                    }
-                })
+                var dbo = db.db(config_json.db);
+                var ido = new ObjectId(pid);
+                dbo.collection(config_json.collection).find({ _id: ido }).toArray(
+                    function (err, result) {
+                        if (result.length > 0) {
+                            resolve(result[0]);
+                        } else {
+                            reject(err);
+                        }
+                    })
+            }
 
         })
     })
 
 }
+
+function searchUser(socialMediaID, socialMediaType, cb) {
+    if (socialMediaType == "fbUID") {
+
+        users.findOne({ 'fbUID': socialMediaID }, cb);
+    }
+    cb(true);
+}
+
 
 function check_valid_amount_in_query(query) {
 
@@ -283,256 +531,3 @@ function p_insert(insert_query, mongo_url) {
         });
     })
 }
-
-
-///////////////////////////////////////////////////////////////////////////////////////
-
-
-
-
-
-
-
-
-//////////////////////////////////////////////////////////////////////////////////////////////////
-const server = http.createServer(
-
-    function (req, res) {
-
-        const parsed_obj = url.parse(req.url, true);
-        const pathname = parsed_obj.pathname;
-        const query = parsed_obj.query;
-
-
-        //1.  get /ping 
-        if (req.method == 'GET' && req.url == '/ping') {
-            res.writeHead(204);
-            res.end();
-        }
-
-
-        // 2.  get /player 
-        // sort by player name, filter active users
-        // return 200 
-        else if (req.method == 'GET' && req.url == '/player') {
-            MongoClient.connect(mongo_url, function (err, db) {
-                if (err) process.exit(5);
-
-                var dbo = db.db(config_json.db);
-                dbo.collection(config_json.collection).find({}).toArray(function (err, result) {
-                    var data = [];
-                    for (var obj of result) {
-                        data.push(convert_db_to_json_player(obj));
-                    }
-                    // sorting the data
-                    data.sort(function (p1, p2) {
-                        if (p1.name < p2.name) return -1;
-                        if (p1.name > p2.name) return 1;
-                    })
-                    res.writeHead(200);
-                    res.write(JSON.stringify(data));
-                    res.end();
-                    db.close();
-                })
-            })
-        }
-
-
-        //3.  get /player/:pid
-        //return 200 if exist, 404 if not exist
-        else if (req.method == 'GET' && /\/player\/\d/.test(pathname)) {
-            const pid = pathname.split('/').slice(-1)[0];
-
-            p_find(pid, mongo_url).then(
-                (data) => {
-                    var rdata = convert_db_to_json_player(data);
-                    res.writeHead(200);
-                    res.write(JSON.stringify(rdata));
-                    res.end();
-                },
-                (err) => {
-                    res.writeHead(404);
-                    res.end();
-                });
-
-        }
-
-        //4.  delete /player/:pid  
-        // succeed -> redirect 303
-        // fail -> 404
-        else if (req.method == 'DELETE' && /\/player\/\d/.test(pathname)) {
-
-            const pid = pathname.split('/').slice(-1)[0];
-            MongoClient.connect(mongo_url, function (err, db) {
-                var dbo = db.db(config_json.db);
-                var ido = new ObjectId(pid);
-                var coll = config_json.collection;
-
-                dbo.collection(coll).deleteOne({ _id: ido }, function (err, result) {
-                    if (result.deletedCount == 1) {
-                        res.writeHead(303, { 'Location': '/player' });
-                    } else {
-                        res.writeHead(404);
-                    }
-                    res.end();
-                })
-            })
-
-        }
-
-        //5.  post /player
-        // success -> 303 redict to get /player/:pid
-        // fail -> 422 must tell all the invalid fields
-        else if (req.method == 'POST' && pathname == '/player') {
-            // print(query)
-            var checked = check_invalid_query(query);
-
-            var invalids = checked;
-            fill_empty_fields(query);
-
-            if (invalids.length == 0) {
-                // valid query  
-                var date = new Date();
-                var document = {
-                    fname: query.fname,
-                    lname: query.lname,
-                    handed: handed_query_to_db[query.handed],
-                    is_active: query.active,
-                    balance_usd: check_balance(query.initial_balance_usd),
-                    created_at: date,
-                }
-
-                p_insert(document, mongo_url).then(
-                    (data) => {
-                        var new_id = data.insertedId.toString();
-                        res.writeHead(303, { 'Location': '/player/' + new_id.toString() });
-                        res.end();
-                    },
-                    (err) => {
-                        print('fucking err:')
-                        print(err)
-                    }
-                )
-            } else {
-                res.writeHead(422);
-                res.write('invalid fields: ' + invalids.join())
-                res.end();
-
-            }
-            // res.writeHead(888);
-            // res.end();
-
-        }
-
-        // 6.  post /player/:pid
-        // update player 
-        // alter succeed -> 303  to 
-        // fail -> 404 
-
-        else if (req.method == 'POST' && /^\/player\/\d/.test(pathname)) {
-            const pid = pathname.split('/').slice(-1)[0];
-            // print(pid)
-            // print(query)
-            p_find(pid, mongo_url).then(
-                (data) => {
-                    var update_query = {};
-                    if (query['active'] == 'f') {
-                        query['active'] = false
-                    }
-                    if (query['active'] in { 't': 1, '1': 1, 'true': 1, 'T': 1, 'TRUE': 1 }) {
-                        query['active'] = true
-                    }
-                    if ('fname' in query) {
-                        update_query['fname'] = query['fname'];
-                    }
-                    if ('lname' in query) {
-                        update_query['lname'] = query['lname'];
-                    }
-                    if ('handed' in query) {
-                        update_query['handed'] = handed_query_to_db[query['handed']];
-                    }
-                    if ('active' in query) {
-                        update_query['is_active'] = query['active'];
-                    }
-
-                    p_update(pid, mongo_url, update_query).then((data) => {
-                        // res.writeHead(303, { 'Location': '/player/' + pid });
-                        // res.end();
-                        res.writeHead(303, { 'Location': '/player/' + pid });
-                        res.end();
-                    }, (err) => {
-                        // res.writeHead(404);
-                        // res.end();
-                        res.writeHead(303, { 'Location': '/player/' + pid });
-                        res.end();
-                    });
-                    
-                },
-                (err) => {
-                    res.writeHead(404);
-                    res.end();
-                }
-            )
-        }
-
-
-        //7.  post /deposit/player/:pid
-        else if (req.method == 'POST' && /^\/deposit\/player/.test(pathname)) {
-            const pid = pathname.split('/').slice(-1)[0];
-
-            p_find(pid, mongo_url).then(
-                (data) => { // player found 
-                    var blc = data.balance_usd;
-                    // check balance
-
-                    // check amount valid 
-                    if (!check_valid_amount_in_query(query)) {
-                        res.writeHead(400);
-                        res.end();
-                    } else {
-
-                        // format the new balance to string 
-                        var new_blc = format_balance(blc, query.amount_usd);
-
-                        // update the blc 
-                        p_update(pid, mongo_url, { balance_usd: new_blc }).then(
-                            (data) => {
-                                res.writeHead(200);
-                                res.write(JSON.stringify({
-                                    old_balance_usd: blc,
-                                    new_balance_usd: new_blc,
-                                }))
-                                res.end();
-                            }, (err) => {
-                                res.writeHead(888);
-                                res.end();
-                            })
-                    }
-
-
-                }, (err) => {
-                    // player not found 
-                    res.writeHead(404);
-                    res.end();
-                })
-
-        }
-
-
-        // others
-        else {
-            // player not exist
-            res.writeHead(404);
-            res.end()
-
-        }
-
-
-    }
-
-
-)
-
-server.listen(3000);
-
-exports.f = check_valid_amount_in_query
