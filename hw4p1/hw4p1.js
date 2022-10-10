@@ -1,7 +1,7 @@
 const fs = require('fs');
 const http = require('http');
 const { reject } = require('lodash');
-const { number } = require('mathjs');
+const { number, ParenthesisNodeDependencies } = require('mathjs');
 // const { reject } = require('lodash');
 const { ObjectId } = require('mongodb');
 const { resolve } = require('path');
@@ -74,6 +74,7 @@ app.delete('/player/:pid', (req, res) => {
                 res.writeHead(404);
                 res.end()
             }
+            db.close();
         })
     })
 })
@@ -107,7 +108,6 @@ app.post('/player', (req, res) => {
                 res.end();
             },
             (err) => {
-                print('fucking err:')
                 print(err)
             }
         )
@@ -410,6 +410,7 @@ function p_update(pid, mongo_url, update_query) {
                     } else {
                         reject();
                     }
+                    db.close();
                 })
 
         })
@@ -443,16 +444,23 @@ function p_find(pid, mongo_url) {
     return new Promise((resolve, reject) => {
         MongoClient.connect(mongo_url, function (err, db) {
             if (!err) {
-
                 var dbo = db.db(config_json.db);
                 var ido = new ObjectId(pid);
                 dbo.collection(config_json.collection).find({ _id: ido }).toArray(
                     function (err, result) {
+                        if (err) {
+                            console.log('p_finderror:')
+                            console.log(err)
+                            throw new Error(err.toString);
+                            // throw new Error(err);
+                        }
+
                         if (result.length > 0) {
                             resolve(result[0]);
                         } else {
                             reject(err);
                         }
+                        db.close();
                     })
             }
 
@@ -521,10 +529,16 @@ function p_insert(insert_query, mongo_url) {
             }
             var dbo = db.db(config_json.db);
             dbo.collection(config_json.collection).insertOne(insert_query, function (err, result) {
+                if (err) {
+                    print('insert:error:')
+                    print(err)
+                    throw new Error(err);
+                }
+
                 if (result) {
                     resolve(result);
                 } else {
-                    reject(new Error('fuck'));
+                    reject(new Error('insert reject'));
                 }
                 db.close()
             });
